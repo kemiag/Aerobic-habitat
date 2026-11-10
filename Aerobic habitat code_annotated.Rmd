@@ -1,0 +1,1840 @@
+---
+title: "Aerobic habitat figures"
+author: "Kemi Ashing-Giwa"
+date: "2025-01-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readxl) #reads data from Excel files
+library(openxlsx) #will let me make an Excel files
+library(patchwork) #helps with ggplot alignment
+library(R.matlab) #interacting with MatLab
+library(tidyverse) #helps tidy data, includes ggplot2, dplyr, tidyr, readr, purrr, etc.
+library(deeptime) #adds timescales
+```
+
+```{r formula and example}
+Ao <- 0.5 #units of Vh is kPa, units of Ao is 1/kPa [EX. HIGH Ao]
+pO2 <- 8.4 #fully saturated seawater is 21 kPa [EX. HIGH O2 LEVEL 40% PAL]
+B <- 1 #(B/B_ref)^ε approaches 1 bc ε approaches 0
+Eo <- -0.2 #eV [EX. LOW Eo]
+kB <- 8.6173303e-5 #ev/K
+temp <- 283.15 #K [EX. LOW TEMP, 10 DEG C]
+temp_ref <- 288.15 #K
+
+phi <- Ao * pO2 * B * exp((Eo/kB)*(1/temp - 1/temp_ref))
+phi
+```
+
+```{r ecophysiotypes}
+#phi for different ecophysiotypes
+
+##Ao and Eo values estimated from Frob. This is HH, MH, HM, LH, MM, HL, LM, ML, LL
+egVh <- c(10.4, 4.5, 10.4, 1.2, 4.5, 10.4, 1.2, 4.5, 1.2) 
+egAo <- 1/egVh
+egEo <- c(0.86, 0.86, 0.34, 0.86, 0.34, -0.03, 0.34, -0.02, -0.03)
+
+egphiHighTLowO <- egAo * 1.05 * B * exp((egEo/kB)*(1/323.15 - 1/temp_ref)) #10% PAL, 50 deg C
+egphiLowTHighO <- egAo * 8.4 * B * exp((egEo/kB)*(1/283.15 - 1/temp_ref))
+```
+
+```{r real temp data}
+extinct <- c(443, 359, 252, 201, 66) #Ordovician, Devonian, Permian, Triassic, Cretaceous extinctions
+
+tempdata <- read.csv("C:/Desktop/Science Stuff 2026/Neoprotoerzoic/scotese_bands_sst.csv") #read in Scotese et al.
+head(tempdata)
+
+phi_lowt <- Ao * pO2 * B * exp((Eo/kB)*(1/(tempdata$Low_SST+273.15) - 1/temp_ref))
+phi_hight <- Ao * pO2 * B * exp((Eo/kB)*(1/(tempdata$High_SST+273.15) - 1/temp_ref))
+
+tempdata_eg <- tempdata %>% #get tempdata, and then use the following functions on it
+  mutate(phi_lowt = phi_lowt, phi_hight = phi_hight) %>% #create new columns
+  pivot_longer(cols = c(phi_lowt, phi_hight), names_to = "condition", values_to = "phi") #pivot_longer reshapes data from wide -> long format (inc. rows and dec. columns)
+
+ggplot(tempdata_eg, aes(x = Age, y = phi, color = condition, group = condition))+#aes/aesthetics deals with visualization
+  geom_line() +
+  labs(x = "Age", y = "phi", title = "Phi Visualization Example") +
+  scale_x_reverse()+#reverse the axis
+  scale_color_manual(values = c("phi_lowt" = "blue", "phi_hight" = "orange")) +
+  geom_vline(xintercept = extinct)+
+  theme_minimal()
+```
+
+```{r real data and ecophysiotypes}
+#create an empty dataframe
+tempdata_eg <- data.frame()
+condition_labels <- c("HH", "MH", "HM", "LH", "MM", "HL", "LM", "ML", "LL")
+
+#loop through conditions and compute phi values; for each value in eqAo, calculate phi based on a specific ecophysiology
+for (i in seq_along(egAo)) { #seq_along generates index values for iteration purposes
+  tempdata_i <- tempdata %>%
+    mutate(
+      phi_lowt = egAo[i] * pO2 * B * exp((egEo[i]/kB) * (1/(Low_SST+273.15) - 1/temp_ref)),
+      phi_hight = egAo[i] * pO2 * B * exp((egEo[i]/kB) * (1/(High_SST+273.15) - 1/temp_ref)),
+      condition = condition_labels[i]  #label each combination
+    ) %>%
+    pivot_longer(cols = c(phi_lowt, phi_hight), 
+                 names_to = "temp_condition", 
+                 values_to = "phi")
+
+  tempdata_eg <- bind_rows(tempdata_eg, tempdata_i)
+}
+
+ggplot(tempdata_eg, aes(x = Age, y = phi, color = condition, linetype = temp_condition, group = interaction(condition, temp_condition))) +
+  geom_line() +
+  geom_vline(xintercept = extinct)+
+  labs(x = "Age", y = "phi", title = "Phi Visualization for High and Low Lat SSTs") +
+  scale_x_reverse() +
+  scale_linetype_manual(values = c("phi_lowt" = "solid", "phi_hight" = "dashed")) +
+  theme_minimal()
+```
+
+```{r paleozoic - oxygen, echo=TRUE}
+#oxygen increase scenario, T constant
+time <- seq(900, 500, by = -1)  
+pO2 <- ifelse(time >= 550, 0.42, 2.1) #2% to 10% 
+temp <- rep(303.15, length(time)) #temp remains constant at 30 degC (temp <- 303.15 is fine for regular math but need this for df/plotting)
+
+#average
+Ao_avg <- 1/4.5  
+Eo_avg <- 0.34  
+#good at hypoxia, bad at T
+Ao_O2 <- 1/1.2  
+Eo_O2 <- 0.86  
+#good at T, bad at hypoxia
+Ao_T <- 1/10.4
+Eo_T <- 0.01 #Frob uses -0.03 but I'll use this instead 
+
+phi_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp - 1/temp_ref))
+phi_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp - 1/temp_ref))
+phi_T <- Ao_T * pO2 * B * exp((Eo_T/kB) * (1/temp - 1/temp_ref))
+
+#convert data to long format for ggplot
+df1 <- data.frame(time, pO2, temp)
+df1_long <- df1 %>%
+  pivot_longer(cols = c(pO2, temp), names_to = "variable", values_to = "value") %>%
+#rescale temperature to match the oxygen scale (0-21)
+  mutate(scaled_value = ifelse( #create new column
+    variable == "temp", #for each row, checks whether the variable column is equal to "temp".
+    scales::rescale(value, to = c(0, 21), from = c(280, 310)), #scale temp range to match pO2 axis, :: accesses exact function from a package
+    value #keep pO2 as is
+  ))
+
+df2 <- data.frame(time, phi_avg, phi_O2, phi_T)
+#convert to long format for ggplot
+df2_long <- df2 %>%
+  pivot_longer(cols = c(phi_avg, phi_O2, phi_T), names_to = "condition", values_to = "phi")
+
+#context plot
+p1 <- ggplot(df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+ 
+  scale_y_continuous(
+    limits = c(0, 21), #keep oxygen scale fixed
+    sec.axis = sec_axis(~ . * (310-280)/21 + 280, name = "Temperature (K)") #sec.axis relabes the y-axis, taking the primary axis values (i.e., .), multiplying them by (310-280)/21, then adding 280)
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp" = "orange"))+
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed")+#mark transition point
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+#Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+#Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "Oxygen and Temperature") +
+  theme_minimal()
+#phi plot
+p2 <- ggplot(df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_y_continuous(limits = c(0, 1.0)) +
+  scale_color_manual(values = c("phi_avg" = "black", "phi_O2" = "blue", "phi_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time")+
+  theme_minimal()
+
+o2plot <- p1+p2
+o2plot
+ggsave(plot=o2plot,
+       "o2plot.pdf")
+```
+```{r paleozoic - temp, echo=TRUE}
+#temperature increase scenario, oxygen constant
+time <- seq(900, 500, by = -1)  
+pO2 <- rep(2.1, length(time)) #10% PAL constant
+temp <- ifelse(time >= 710, 308.15, 
+               ifelse(time > 600, 298.15, 
+                      ifelse(time >= 538.8, 298.15 - (5 * (600-time)/(600-538.8)), 293.15)))
+
+df3 <- data.frame(time, pO2, temp)
+df3_long <- df3 %>%
+  pivot_longer(cols = c(pO2, temp), names_to = "variable", values_to = "value") %>%
+#rescale temperature to match oxygen's axis range (0-21)
+  mutate(scaled_value = ifelse(
+    variable == "temp", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), #scale from 280-320 to 0-21
+    value #keep pO2 as is
+  ))
+
+#create a second data frame for phi values
+df4 <- data.frame(time, phi_avg, phi_O2, phi_T)
+#convert to long format for ggplot
+df4_long <- df4 %>%
+  pivot_longer(cols = c(phi_avg, phi_O2, phi_T), names_to = "condition", values_to = "phi")
+
+#context plot
+p1 <- ggplot(df3_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+#reverse time axis
+  scale_y_continuous(
+    limits = c(0, 21), #keep oxygen scale fixed
+    sec.axis = sec_axis(~ . * (max(df1$temp) - min(df3$temp))/21 + min(df3$temp), 
+                        name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue), alpha defines transparency
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "Oxygen and Temperature") +
+  theme_minimal()
+#phi plot
+p2 <- ggplot(df4_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi_avg" = "black", "phi_O2" = "blue", "phi_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+tempplot <- p1+p2
+tempplot
+ggsave(plot=tempplot,
+       "tempplot.pdf")
+```
+
+```{r paleozoic actual figs, echo=TRUE}
+time <- seq(900, 500, by = -1)  
+pO2 <- rep(2.1, length(time)) #10% constant
+pO2_change <- ifelse(time >= 550, 0.42, 4.2) #2% to 20%
+
+#SET 1 - demonstration of idea: O2 steady, T drops (high and moderate change); O2 steady, T increases (moderate to high)
+
+#temperature drops
+temp_drop <- ifelse(time > 640, 308.15, 298.15)
+
+phi1_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_drop - 1/temp_ref))
+phi1_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_drop - 1/temp_ref))
+phi1_T <- Ao_T * pO2 * B * exp((Eo_T/kB) * (1/temp_drop - 1/temp_ref))
+
+set1_df1 <- data.frame(time, pO2, temp_drop)
+set1_df1_long <- set1_df1 %>%
+  pivot_longer(cols = c(pO2, temp_drop), names_to = "variable", values_to = "value") %>%
+  mutate(scaled_value = ifelse(
+    variable == "temp_drop", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), #scale from 280-320 to 0-21
+    value #keep pO2 as is
+  ))
+
+set1_df2 <- data.frame(time, phi1_avg, phi1_O2, phi1_T)
+set1_df2_long <- set1_df2 %>%
+  pivot_longer(cols = c(phi1_avg, phi1_O2, phi1_T), names_to = "condition", values_to = "phi")
+
+set1_p1 <- ggplot(set1_df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+ #reverse time axis
+  scale_y_continuous(
+    limits = c(0, 21),  #keep oxygen scale fixed
+    sec.axis = sec_axis(~ . * (max(set1_df1$temp_drop) - min(set1_df1$temp_drop))/21 + min(set1_df1$temp_drop), 
+                        name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp_drop" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 10%, T = 35 to 25C") +
+  theme_minimal()
+
+set1_p2 <- ggplot(set1_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi1_avg" = "black", "phi1_O2" = "blue", "phi1_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+set1_p1+set1_p2
+
+#temperature increases
+temp_jump <- ifelse(time < 640, 308.15, 298.15)
+
+phi1a_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_jump - 1/temp_ref))
+phi1a_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_jump - 1/temp_ref))
+phi1a_T <- Ao_T * pO2 * B * exp((Eo_T/kB) * (1/temp_jump - 1/temp_ref))
+
+set1a_df1 <- data.frame(time, pO2, temp_jump)
+set1a_df1_long <- set1a_df1 %>%
+  pivot_longer(cols = c(pO2, temp_jump), names_to = "variable", values_to = "value") %>%
+  mutate(scaled_value = ifelse(
+    variable == "temp_jump", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), #scale from 280-320 to 0-21
+    value  #keep pO2 as is
+  ))
+
+set1a_df2 <- data.frame(time, phi1a_avg, phi1a_O2, phi1a_T)
+set1a_df2_long <- set1a_df2 %>%
+  pivot_longer(cols = c(phi1a_avg, phi1a_O2, phi1a_T), names_to = "condition", values_to = "phi")
+
+set1a_p1 <- ggplot(set1a_df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+#reverse time axis
+  scale_y_continuous(
+    limits = c(0, 21), #keep oxygen scale fixed
+    sec.axis = sec_axis(~ . * (max(set1a_df1$temp_jump) - min(set1a_df1$temp_jump))/21 + min(set1a_df1$temp_jump), 
+                    name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp_jump" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 10%, T = 25 to 35C") +
+  theme_minimal()
+
+set1a_p2 <- ggplot(set1a_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi1a_avg" = "black", "phi1a_O2" = "blue", "phi1a_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+set1a_p1+set1a_p2
+
+#SET 2 - more complicated w/ glaciations: O2 steady, O2 decreases
+
+#O2 steady
+temp_change <- ifelse(time >= 710, 308.15, 
+               ifelse(time > 640, 298.15, 
+                      ifelse(time >= 538.8, 298.15 - (5 * (640-time)/(640-538.8)), 293.15)))
+
+phi2_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_change - 1/temp_ref))
+phi2_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_change - 1/temp_ref))
+phi2_T <- Ao_T * pO2 * B * exp((Eo_T/kB) * (1/temp_change - 1/temp_ref))
+
+set2_df1 <- data.frame(time, pO2, temp_change)
+set2_df1_long <- set2_df1 %>%
+  pivot_longer(cols = c(pO2, temp_change), names_to = "variable", values_to = "value") %>%
+  mutate(scaled_value = ifelse(
+    variable == "temp_change", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), 
+    value 
+  ))
+
+set2_df2 <- data.frame(time, phi2_avg, phi2_O2, phi2_T)
+set2_df2_long <- set2_df2 %>%
+  pivot_longer(cols = c(phi2_avg, phi2_O2, phi2_T), names_to = "condition", values_to = "phi")
+
+set2_p1 <- ggplot(set2_df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_y_continuous(
+    limits = c(0, 21), 
+    sec.axis = sec_axis(~ . * (max(set2_df1$temp_change) - min(set2_df1$temp_change))/21 + min(set2_df1$temp_change), 
+                    name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp_change" = "orange"))+
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed")+
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue) 
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 10%, T = 35 to 25 to 20C") +
+  theme_minimal()
+
+set2_p2 <- ggplot(set2_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi2_avg" = "black", "phi2_O2" = "blue", "phi2_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+set2_p1+set2_p2
+
+#O2 increases
+phi2a_avg <- Ao_avg * pO2_change * B * exp((Eo_avg/kB) * (1/temp_change - 1/temp_ref))
+phi2a_O2 <- Ao_O2 * pO2_change * B * exp((Eo_O2/kB) * (1/temp_change - 1/temp_ref))
+phi2a_T <- Ao_T * pO2_change * B * exp((Eo_T/kB) * (1/temp_change - 1/temp_ref))
+
+set2a_df1 <- data.frame(time, pO2_change, temp_change)
+set2a_df1_long <- set2a_df1 %>%
+  pivot_longer(cols = c(pO2_change, temp_change), names_to = "variable", values_to = "value") %>%
+mutate(scaled_value = ifelse(
+    variable == "temp_change", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)),  
+    value 
+  ))
+
+set2a_df2 <- data.frame(time, phi2a_avg, phi2a_O2, phi2a_T)
+set2a_df2_long <- set2a_df2 %>%
+  pivot_longer(cols = c(phi2a_avg, phi2a_O2, phi2a_T), names_to = "condition", values_to = "phi")
+
+set2a_p1 <- ggplot(set2a_df1_long, aes(x = time, y = scaled_value, color = variable))+
+  geom_line(size = 1.2) +
+  scale_x_reverse()+ #reverse time axis
+  scale_y_continuous(
+    limits = c(0, 21), #keep oxygen scale fixed
+    sec.axis = sec_axis(~ . * (max(set2a_df1$temp_change) - min(set2a_df1$temp_change))/21 + min(set2a_df1$temp_change), 
+                    name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2_change" = "blue", "temp_change" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 2 to 20%, T = 35 to 25 to 20C ") +
+  theme_minimal()
+
+set2a_p2 <- ggplot(set2a_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi2a_avg" = "black", "phi2a_O2" = "blue", "phi2a_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+  #Sturtian (semi-transparent blue)
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+  #Marinoan (semi-transparent blue)
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+set2a_p1+set2a_p2
+
+#SET 3 - with glaciations → moderately hot world: O2 steady; O2 increases
+temp_warm <- ifelse(time >= 710, 308.15, 
+               ifelse(time > 640, 298.15, 
+                 ifelse(time >= 538.8, 
+                        298.15+(301.15-298.15) * ((640-time)/(640-538.8)), 
+                        301)))
+
+#O2 steady
+phi3_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_warm - 1/temp_ref))
+phi3_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_warm - 1/temp_ref))
+phi3_T <- Ao_T * pO2 * B * exp((Eo_T/kB) * (1/temp_warm - 1/temp_ref))
+
+set3_df1 <- data.frame(time, pO2, temp_warm)
+set3_df1_long <- set3_df1 %>%
+  pivot_longer(cols = c(pO2, temp_warm), names_to = "variable", values_to = "value") %>%
+  mutate(scaled_value = ifelse(
+    variable == "temp_warm", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), 
+    value 
+  ))
+
+set3_df2 <- data.frame(time, phi3_avg, phi3_O2, phi3_T)
+set3_df2_long <- set3_df2 %>%
+  pivot_longer(cols = c(phi3_avg, phi3_O2, phi3_T), names_to = "condition", values_to = "phi")
+
+set3_p1 <- ggplot(set3_df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+
+  scale_y_continuous(
+    limits = c(0, 21), 
+    sec.axis = sec_axis(~ . * (max(set3_df1$temp_warm) - min(set3_df1$temp_warm))/21 + min(set3_df1$temp_warm), 
+                    name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2" = "blue", "temp_warm" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 10%, T = 30 to 25 to 28C") +
+  theme_minimal()
+
+set3_p2 <- ggplot(set3_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi3_avg" = "black", "phi3_O2" = "blue", "phi3_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+ 
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time")+
+  theme_minimal()
+
+set3_p1+set3_p2
+
+#O2 increases
+phi3a_avg <- Ao_avg * pO2_change * B * exp((Eo_avg/kB) * (1/temp_warm - 1/temp_ref))
+phi3a_O2 <- Ao_O2 * pO2_change * B * exp((Eo_O2/kB) * (1/temp_warm - 1/temp_ref))
+phi3a_T <- Ao_T * pO2_change * B * exp((Eo_T/kB) * (1/temp_warm - 1/temp_ref))
+
+set3a_df1 <- data.frame(time, pO2_change, temp_warm)
+set3a_df1_long <- set3a_df1 %>%
+  pivot_longer(cols = c(pO2_change, temp_warm), names_to = "variable", values_to = "value") %>%
+  mutate(scaled_value = ifelse(
+    variable == "temp_warm", 
+    scales::rescale(value, to = c(0, 21), from = c(280, 320)), 
+    value 
+  ))
+
+set3a_df2 <- data.frame(time, phi3a_avg, phi3a_O2, phi3a_T)
+set3a_df2_long <- set3a_df2 %>%
+  pivot_longer(cols = c(phi3a_avg, phi3a_O2, phi3a_T), names_to = "condition", values_to = "phi")
+
+set3a_p1 <- ggplot(set3a_df1_long, aes(x = time, y = scaled_value, color = variable)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse()+ 
+  scale_y_continuous(
+    limits = c(0, 21),  
+    sec.axis = sec_axis(~ . * (max(set3a_df1$temp_warm) - min(set3a_df1$temp_warm))/21 + min(set3a_df1$temp_warm), 
+                    name = "Temperature (K)")
+  ) +
+  scale_color_manual(values = c("pO2_change" = "blue", "temp_warm" = "orange")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  labs(x = "Time (Ma)", y = "Oxygen (kPa)", title = "O2 = 2 to 20%, T = 30 to 25 to 28C") +
+  theme_minimal()
+
+set3a_p2 <- ggplot(set3a_df2_long, aes(x = time, y = phi, color = condition)) +
+  geom_line(size = 1.2) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("phi3a_avg" = "black", "phi3a_O2" = "blue", "phi3a_T" = "green")) +
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed") +
+  geom_rect(aes(xmin = 660, xmax = 717, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  geom_rect(aes(xmin = 632.3, xmax = 654.5, ymin = -Inf, ymax = Inf), 
+            fill = "lightblue", alpha = 0.05, color=NA)+
+  labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+  theme_minimal()
+
+set3a_p1+set3a_p2
+
+multi <- (set1_p1+set1_p2+
+  set1a_p1+set1a_p2+
+  set2_p1+set2_p2+
+  set2a_p1+set2a_p2+
+  set3_p1+set3_p2+
+  set3a_p1+set3a_p2)+
+  plot_layout(ncol=2)
+
+multi
+```
+
+```{r new scenarios for temperature, echo=TRUE}
+time <- seq(600, 700, by = 0.1)
+
+#parameter grid
+initial_C <- c(43, 40, 35)
+drop_C <- c(28, 25)
+pO2_vals <- c(1.05, 2.4, 4.2, 8.4)
+param_grid <- expand.grid(start_temp_C = initial_C, drop_temp_C = drop_C, pO2 = pO2_vals)
+
+#function to simulate and plot each scenario
+plot_pair <- function(start_temp_C, drop_temp_C, pO2) {
+  temp_drop <- ifelse(time >= 640, start_temp_C+273.15, drop_temp_C+273.15)
+  #phi calculations
+  phi1_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_drop - 1/temp_ref))
+  phi1_O2 <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_drop - 1/temp_ref))
+  phi1_T  <- Ao_T  * pO2 * B * exp((Eo_T/kB) * (1/temp_drop - 1/temp_ref))
+  df_phi <- tibble( #constructs a dataframe
+    time = time,
+    phi1_avg = phi1_avg,
+    phi1_O2 = phi1_O2,
+    phi1_T = phi1_T
+  ) %>%
+    pivot_longer(cols = starts_with("phi1"), names_to = "condition", values_to = "phi")
+  #context plot
+  temp_scaled <- scales::rescale(temp_drop, to = c(0, 21), from = c(280, 320))
+  df_context <- tibble(time = time, pO2 = pO2, scaled_temp = temp_scaled) %>%
+    pivot_longer(cols = c(pO2, scaled_temp), names_to = "variable", values_to = "value")
+  context_plot <- ggplot(df_context, aes(x = time, y = value, color = variable)) +
+    geom_line(size = 1.2) +
+    scale_x_reverse() +
+    scale_y_continuous(
+      limits = c(0, 21),
+      sec.axis = sec_axis(~ . * (320 - 280)/21 + 280, name = "Temperature (K)")
+    ) +
+    scale_color_manual(values = c("pO2" = "blue", "scaled_temp" = "orange")) +
+    geom_vline(xintercept = 640, color = "red", linetype = "dashed") +
+    labs(
+      x = "Time (Ma)",
+      y = "Oxygen (kPa)",
+      title = paste("Oxygen and Temperature",
+                    start_temp_C, "→", drop_temp_C, "°C |", pO2, "kPa")
+    ) +
+    theme_minimal()
+  #phi plot
+  phi_plot <- ggplot(df_phi, aes(x = time, y = phi, color = condition)) +
+    geom_line(size = 1.2) +
+    scale_x_reverse() +
+    scale_color_manual(values = c("phi1_avg" = "black", "phi1_O2" = "blue", "phi1_T" = "green")) +
+    geom_vline(xintercept = 640, color = "red", linetype = "dashed") +
+    labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+    theme_minimal()
+    return(context_plot+phi_plot)  #create side-by-side plots using patchwork
+}
+
+#generate and optionally save/view all plots
+plots <- purrr::pmap(param_grid, plot_pair) #purr:: specifies the purr package, pmap creates parallel maps
+
+plots[[1]] #view the first pair
+```
+
+```{r new scenarios for oxygen, echo=TRUE}
+temp <- 25+273.15
+time <- seq(600, 700, by = 0.1)
+target_pO2 <- c(2.1, 4.2, 8.4) #oxygen rise scenarios (start at 1.05 kPa, jump at 640 Ma)
+
+#function to simulate and plot each scenario
+plot_pair <- function(final_pO2) {
+  pO2_over_time <- ifelse(time > 640, 1.05, final_pO2)
+  #phi calculations
+  phi2_avg <- Ao_avg * pO2_over_time * B * exp((Eo_avg/kB) * (1/temp - 1/temp_ref))
+  phi2_O2 <- Ao_O2 * pO2_over_time * B * exp((Eo_O2/kB) * (1/temp - 1/temp_ref))
+  phi2_T  <- Ao_T  * pO2_over_time * B * exp((Eo_T/kB) * (1/temp - 1/temp_ref))
+  df_phi <- tibble(
+    time = time,
+    phi2_avg = phi2_avg,
+    phi2_O2 = phi2_O2,
+    phi2_T = phi2_T
+  ) %>%
+    pivot_longer(cols = starts_with("phi2"), names_to = "condition", values_to = "phi")
+  #context plot
+  temp_scaled <- scales::rescale(temp, to = c(0, 21), from = c(280, 320))
+  df_context <- tibble(time = time, pO2 = pO2_over_time, Scaled_Temp = temp_scaled) %>%
+    pivot_longer(cols = c(pO2, Scaled_Temp), names_to = "variable", values_to = "value")
+  context_plot <- ggplot(df_context, aes(x = time, y = value, color = variable)) +
+    geom_line(size = 1.2) +
+    scale_x_reverse() +
+    scale_y_continuous(
+      limits = c(0, 21),
+      sec.axis = sec_axis(~ . * (320 - 280)/21 + 280, name = "Temperature (K)")
+    ) +
+    scale_color_manual(values = c("pO2" = "blue", "Scaled_Temp" = "orange")) +
+    geom_vline(xintercept = 640, color = "red", linetype = "dashed") +
+    labs(
+      x = "Time (Ma)",
+      y = "Oxygen (kPa)",
+      title = paste("O₂ Rise at Constant 25°C:", "1.05 →", final_pO2, "kPa")
+    ) +
+    theme_minimal()
+
+  #phi plot
+  phi_plot <- ggplot(df_phi, aes(x = time, y = phi, color = condition)) +
+    geom_line(size = 1.2) +
+    scale_x_reverse() +
+    scale_color_manual(values = c("phi2_avg" = "black", "phi2_O2" = "blue", "phi2_T" = "green")) +
+    geom_vline(xintercept = 640, color = "red", linetype = "dashed") +
+    labs(x = "Time (Ma)", y = "Phi", title = "Phi Over Time") +
+    theme_minimal()
+
+  return(context_plot+phi_plot)
+}
+
+#generate plots for each final pO2
+plots <- purrr::map(target_pO2, plot_pair)
+
+plots[[1]]
+```
+
+```{r new scenarios for glaciations, echo=FALSE}
+#parameters
+initial_C <- c(43, 40, 35) #warmer
+initial_C <- c(40, 35, 30) #cooler
+drop1_C <- 35 #hotter
+drop2_C <- 30 #hotter
+#drop1_C <- 30 #cooler
+#drop2_C <- 25 #cooler
+pO2_rise <- c(2.1, 4.2, 8.4)
+pO2_start <- 1.05
+
+param_grid <- expand.grid(
+  start_temp_C = initial_C,
+  drop1_temp_C = drop1_C,
+  drop2_temp_C = drop2_C,
+  pO2_final = pO2_rise
+)
+
+param_grid <- tibble::tibble( #for fig 3
+  start_temp_C = c(40, 40, 40),
+  drop1_temp_C = c(30, 30, 35),
+  drop2_temp_C = c(25, 25, 30),
+  pO2_final    = c(2.1, 10.5, 10.5)
+)
+
+#plotting function
+plot_pair <- function(start_temp_C, drop1_temp_C, drop2_temp_C, pO2_final) {
+  time <- seq(900, 500, length.out = 100)
+  temp_C <- ifelse(
+  time >= 710, start_temp_C, #initial warm state
+  ifelse(
+    time > 640, drop1_temp_C, #immediate drop to 28 °C
+    ifelse(
+      time >= 538.8, #gradual drop from 28 → 25 °C
+      drop1_temp_C - (drop1_temp_C - drop2_temp_C) * ((640-time)/(640-538.8)),
+      drop2_temp_C #plateau at 25 °C
+    )
+  )
+)
+  temp_K <- temp_C+273.15
+  pO2 <- ifelse(time <= 538.8, pO2_final, 1.05)
+  #phi calculations
+  phi_avg <- Ao_avg * pO2 * B * exp((Eo_avg/kB) * (1/temp_K - 1/temp_ref))
+  phi_O2  <- Ao_O2 * pO2 * B * exp((Eo_O2/kB) * (1/temp_K - 1/temp_ref))
+  phi_T   <- Ao_T  * pO2 * B * exp((Eo_T/kB) * (1/temp_K - 1/temp_ref))
+  #data for phi plot
+  df_phi <- tibble(
+    time = time,
+    phi_avg = phi_avg,
+    phi_O2 = phi_O2,
+    phi_T = phi_T
+  ) %>%
+    pivot_longer(cols = starts_with("phi_"), names_to = "Condition", values_to = "Phi")
+  #context plot
+  scale_T_to_O2 <- function(temp_C) (temp_C-20)/(45-20) * 21
+  scale_O2_to_T <- function(y) 20 + (y/21) * (45-20)
+  guides <- seq(20, 45, 5)
+  diff_values <- pO2 - scale_T_to_O2(temp_C) #this section basically makes sure the two axes show up properly
+  sign_changes <- which(diff(sign(diff_values)) != 0)
+  if(length(sign_changes) > 0) {
+    idx <- sign_changes[length(sign_changes)]
+    x1 <- time[idx]
+    x2 <- time[idx+1]
+    y1 <- diff_values[idx]
+    y2 <- diff_values[idx+1]
+    intersection_time <- x1 - y1 * (x2-x1)/(y2-y1)
+  } else {
+    intersection_time <- time[which.min(abs(diff_values))]
+  }
+ context_plot <- ggplot() +
+    geom_line(
+      data = tibble(time, pO2 = pO2),
+      aes(x = time, y = pO2, color = "pO2"),
+      linewidth = 1.2
+    ) +
+    geom_line(
+      data = tibble(time, temp_C = temp_C),
+      aes(x = time, y = scale_T_to_O2(temp_C), color = "temp_C"),
+      linewidth = 1.2
+    ) +
+    scale_x_reverse() +
+    scale_y_continuous(
+      name = "pO2",
+      limits = c(0, 21),
+      sec.axis = sec_axis(
+        transform = ~ scale_O2_to_T(.),
+        name = "Temperature (°C)",
+        breaks = guides
+      )
+    ) +
+  scale_color_manual(values = c("pO2" = "darkblue", "temp_C" = "orange"))+
+  geom_vline(xintercept = 538.8, color = "red", linetype = "dashed")+ #Cambrian explosion
+  geom_rect(aes(xmin = 717, xmax = 660, ymin = -Inf, ymax = Inf), #Sturtian glaciation 
+            fill = "lightblue", alpha = 0.5, inherit.aes = FALSE)+
+  geom_rect(aes(xmin = 654.5, xmax = 632.3, ymin = -Inf, ymax = Inf), #Marinoan glaciation
+            fill = "lightblue", alpha = 0.5, inherit.aes = FALSE)+
+  labs(
+    x = "Time (Myr ago)",
+    title = paste(
+      "O2 =", pO2_start, "→", pO2_final, 
+      "kPa; Temp:", start_temp_C, "→", drop1_temp_C, "→", drop2_temp_C, "°C"
+    ),
+    color = NULL
+  ) +
+    coord_geo(  #deep time scale
+      xlim = c(900, 500),  #limit the x-axis to 700 - 500 Ma
+      dat = list("periods"),  
+      size = list(3, 2),   #size for period and epoch labels
+      abbrv = list(TRUE, TRUE),
+      height = unit(1, "line")
+    ) +
+    theme_minimal(base_size = 15)+
+theme(
+  legend.position = "top",
+  plot.title = element_text(size = 15)
+)
+  #phi plot
+  phi_plot <- ggplot(df_phi, aes(x = time, y = Phi, color = Condition))+
+    geom_line(size = 1.2) +
+    scale_x_reverse()+ #reverse time scale
+    scale_color_manual(
+      values = c("phi_avg" = "black", "phi_O2" = "blue", "phi_T" = "red"),
+      labels = c("Average", "Hypoxia tolerant", "Heat tolerant"),
+      name = NULL)+
+    geom_vline(xintercept = 538.8, color = "red", linetype = "dashed")+
+    labs(x = "Time (Myr ago)", y = "Φ", title = "Φ over Time")+
+    coord_geo( #deep time scale
+      xlim = c(900, 500),  
+      ylim = c(0, 3),
+      dat = list("periods"),  
+      size = list(3, 2),   
+      abbrv = list(TRUE, TRUE),
+      height = unit(1, "line")
+    ) +
+    theme_minimal(base_size = 15) +
+theme(
+  legend.position = "right",
+  plot.title = element_text(size = 15)
+)
+  phi_plot <- phi_plot +
+  annotate("rect", xmin = 717, xmax = 660, ymin = 0, ymax = 3,
+           fill = "lightblue", alpha = 0.4) +
+  annotate("rect", xmin = 654.5, xmax = 632.3, ymin = 0, ymax = 3,
+           fill = "lightblue", alpha = 0.4) +
+    geom_hline(yintercept = 2.5, color = "green", linetype = "dashed")+
+    geom_vline(xintercept = 575, color = "gold", linetype = "solid")+
+    geom_vline(xintercept = 560, color = "gold", linetype = "dotdash")+
+    geom_vline(xintercept = 550, color = "gold", linetype = "dotted")
+  return(context_plot+ phi_plot)
+}
+
+#generate all plot combinations
+plots <- purrr::pmap(param_grid, plot_pair)
+plots
+
+figure3 <- wrap_plots(plots, ncol = 1)  #stack vertically
+figure3
+
+pdf("figure3.pdf", width = 8, height = 12)
+
+print(figure3)
+
+dev.off()
+```
+
+```{r heatmaps2 Vh vs Eo, echo =TRUE}
+marquez <- read.csv("C:/Desktop/Science Stuff 2026/Neoprotoerzoic/Marquez.csv") #read in Marquez et al. ecophysiotype data
+head(marquez)
+
+AoEo <- ggplot(marquez, aes(x = Eo..eV., y = Ao..1.atm., color = Class)) +
+  geom_point(size = 3)+ #adjust point size for better visibility
+  labs(x = "Temperature sensitivity, Eo (eV)", y = "Hypoxia tolerance, Ao (1/atm)", title = "Ao vs Eo") +
+  theme_minimal()
+
+AoEo
+
+fauna_summary <- marquez %>%
+  group_by(Fauna) %>%
+  summarise(
+    Eo_center = mean(Eo..eV., na.rm = TRUE),
+    Ao_center = mean(Ao..1.atm., na.rm = TRUE),
+    #95% spread of the fauna cloud
+    Eo_low  = quantile(Eo..eV., 0, na.rm = TRUE),
+    Eo_high = quantile(Eo..eV., 1, na.rm = TRUE),
+    Ao_low  = quantile(Ao..1.atm., 0, na.rm = TRUE),
+    Ao_high = quantile(Ao..1.atm., 1, na.rm = TRUE)
+  )
+extreme_eco <- AoEo +
+  geom_point(
+    data = fauna_summary,
+    inherit.aes = FALSE,
+    aes(
+      x = Eo_center,
+      y = Ao_center,
+      shape = Fauna
+    ),
+    size = 6,
+    color = "black"
+  ) +
+  scale_shape_manual(
+    name = "Fauna",
+    values = c(P = 17, M = 16)
+  ) +
+  scale_linetype_manual(
+    name = "Fauna",
+    values = c(P = "solid", M = "dashed")
+  ) +
+  geom_point(aes(x = 0.4, y = 873), color = "red", shape = 8, size = 4) +
+  geom_point(aes(x = 0.01, y = 249), color = "blue", shape = 8, size = 4) +
+  geom_point(aes(x = 0.4, y = 436.5), color = "darkred", shape = 8, size = 4) +
+  geom_point(aes(x = 0.01, y = 124.5), color = "darkblue", shape = 8, size = 4) +
+  theme_minimal(base_size = 15)+  #increases all text
+  theme(
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 15),
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size = 15)
+  )
+
+Ao <- 2.5/(2.1 * B * exp((0.01/kB) * (1/313.15 - 1/temp_ref)))
+Ao
+
+pdf("extreme_eco.pdf", width = 8, height = 6)
+
+print(extreme_eco)
+
+dev.off()
+```
+
+```{r metabolic index}
+#get temperatures and pO2 values
+tempC_range <- seq(0, 40, by = 0.1) #Judd et al.
+pO2_range <- seq(0, 30, by = 0.1) #Mills et al.
+enviro_grid <- expand.grid(tempC = tempC_range, pO2 = pO2_range)
+enviro_grid$tempK <- enviro_grid$tempC+273.15
+
+#ecophysiotypes from Frob et al. 
+ecophys <- data.frame(
+  type = c("Average", "Hypoxia tolerant", 
+           "Heat tolerant"),
+  Ao = c(1/4.5, 1/1.2, 1/7),
+  Eo = c(0.34, 0.86, 0.05) #Frob defines -0.03, using 0.05 here. 
+)
+
+#get phi for each ecophysiotype
+phi_data <- bind_rows(lapply(1:nrow(ecophys), function(i) { #from row  1 to the total # of rows, run this function...
+  row <- ecophys[i, ] #grab a given row and save the traits (Ao and Eo)
+  df <- enviro_grid
+  df$type <- row$type
+  df$phi <- row$Ao * df$pO2 * B * exp((row$Eo/kB) * (1/df$tempK - 1/temp_ref))
+  df
+}))
+
+ggplot(phi_data, aes(x = tempC, y = pO2, fill = phi)) +
+  geom_raster(interpolate = TRUE)+ #creates a colored heatmap
+  facet_wrap(~type, nrow = 1)+ #creates a collection of plots where each othe represents a subset of the data
+  geom_contour(aes(z = phi), breaks = c(1), color = "black", linetype = "dashed", size = 0.8)+ #phi = 1 (dashed) 
+  geom_contour(aes(z = phi), breaks = c(2.5), color = "black", linetype = "solid", size = 0.8)+ #phi = 3 (solid)
+  scale_fill_viridis_c(option = "plasma", trans = "log10", name = expression(Phi)) +
+  labs(
+    x = "Seawater Temperature (°C)",
+    y = "Seawater pO2 (kPa)",
+    title = "Φ for three key ecophysiotypes"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    strip.text = element_text(size = 8)
+  )
+
+#discrete colors
+phi_colors <- phi_data %>%
+  mutate(phi_category = case_when(
+    phi > 2.5 ~ "Ecologically viable (Φ > 2.5)",
+    phi >= 1 & phi <= 2.5 ~ "Minimum pO2 for survival (1 ≤ Φ ≤ 2.5)",
+    phi < 1 ~ "Below standard metabolic rate (Φ < 1)"
+  )) %>%
+  mutate(phi_category = factor(
+    phi_category,
+    levels = c(
+      "Ecologically viable (Φ > 2.5)",
+      "Minimum pO2 for survival (1 ≤ Φ ≤ 2.5)",
+      "Below standard metabolic rate (Φ < 1)"
+    )
+  ))
+
+#plot
+phi_fig <- ggplot(phi_colors, aes(x = tempC, y = pO2, fill = phi_category)) +
+  geom_raster(interpolate = TRUE) +
+  facet_wrap(~type, nrow = 1) +
+  scale_fill_manual(
+    name = expression(phi~"category"),
+    values = c(
+      "Ecologically viable (Φ > 2.5)" = "blue",
+      "Minimum pO2 for survival (1 ≤ Φ ≤ 2.5)" = "orange",
+      "Below standard metabolic rate (Φ < 1)" = "red"
+    )
+  ) +
+  labs(
+    x = "Seawater temperature (°C)",
+    y = "Seawater pO2 (kPa)",
+    title = "Φ for three key ecophysiotypes"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = element_text(size = 12)
+  )
+ggsave(
+  filename = "phi_ecophysiotypes.pdf",  
+  plot = phi_fig,                    
+  width = 10,                        
+  height = 4,                         
+  units = "in",                   
+  dpi = 1000 #useful for raster layers
+)
+```
+
+
+```{r monte carlo}
+n_iter <- 500 #set # of iterations
+
+setwd("C:/Neoprotoerzoic")
+#datasets
+mills_old <- read_csv("MillsO2.csv") #columns: Time, Mid, Min, Max
+mills <- read_csv("GCBS4_outputs_14_7_2022.csv")
+judd_old <- read_csv("JuddT.csv") #columns: UpperAge, LowerAge, AverageAge, GMST_05, GMST_95
+judd <- read_csv("judd_bands_sst.csv") #columns: Age_Mean, Low_95, High_95 , get uncertainties for both low and high latitudes
+scotese <- read_csv("scotese_bands_sst.csv") #Low_SST and High_SST
+penn <- read_csv("Penn_2018_ecophysiotypes.csv") #Ao and Eo values
+bergmann <- read_csv("Temperature_Deciles_CambroOrdovician_Apatite5Ma.csv")
+
+time_steps_S <- seq(-540, 0, by = 5) #Scotese goes up to 541 Ma
+time_steps_J <- seq(-480, 0, by = 5) #Judd goes up to 480 Ma
+time_steps_B <- seq(-520, -445, by = 5)
+
+time_data_scoteseL <- lapply(time_steps_S, function(t) {
+  #find nearest rows in each dataset
+  o2_row <- mills %>% slice(which.min(abs(Time-t)))
+  temp_row <- scotese %>% slice(which.min(abs(Age-abs(t)))) #if Age is positive
+  temp_min <- temp_row$Low_SST-3 #creating an artificial error of +/- 2. Average error in Judd
+  temp_max <- temp_row$Low_SST+3 #creating an artificial error of +/- 2
+  data.frame(
+    time = abs(t),  
+    temp_min = temp_min,
+    temp_max = temp_max,
+    pO2_min = o2_row$Min * (101.325/100), #converting % atm to kPa
+    pO2_max = o2_row$Max * (101.325/100) #converting % atm  to kPa
+  )
+}) %>% bind_rows()
+
+time_data_juddL <- lapply(time_steps_J, function(t) {
+  #find nearest rows in each dataset
+  o2_row <- mills %>% slice(which.min(abs(Time-t)))
+  temp_row <- judd %>% slice(which.min(abs(Age_Mean-abs(t)))) #if Age is positive
+  temp_min <- temp_row$Low_5
+  temp_max <- temp_row$Low_95
+  data.frame(
+    time = abs(t),  
+    temp_min = temp_min,
+    temp_max = temp_max,
+    pO2_min = o2_row$Min * (101.325/100), #converting % atm to kPa
+    pO2_max = o2_row$Max * (101.325/100) #converting % atm to kPa
+  )
+}) %>% bind_rows()
+
+time_data_Berg <- lapply(time_steps_B, function(t) {
+  age <- abs(t)
+  o2_row <- mills %>% #nearest oxygen record
+    slice(which.min(abs(Time-t)))
+  temp_row <- bergmann %>% #nearest temperature record
+    slice(which.min(abs(`Age Center (Ma)`-age)))
+  temp <- temp_row$`10th (°C)`
+  temp50 <- temp_row$`50th (°C)`
+  data.frame(
+    time = age,
+    temp_min = temp-3,
+    temp_max = temp+3,
+    temp50_min = temp50-3,
+    temp50_max = temp50+3,
+    pO2_min = o2_row$Min * (101.325/100), #converting % atm to kPa
+    pO2_max = o2_row$Max * (101.325/100) #converting % atm to kPa
+  )
+}) %>%
+  bind_rows()
+
+#physiology parameter ranges
+Ao_range <- c(1/10, 1/1)
+Eo_range <- c(0.05, 0.86)
+param_samples <- data.frame( #sample arbitrary Ao/Eo values from the Ao range; [1] and [2] define the upper/lower bounds
+  Ao = runif(n_iter, Ao_range[1], Ao_range[2]),
+  Eo = runif(n_iter, Eo_range[1], Eo_range[2])
+)
+
+#run Monte Carlo for Ao and Eo ranges
+set.seed(21)
+results_scoteseL <- time_data_scoteseL %>% #Scotese et al
+  rowwise() %>% #look at data one row at a time
+  do({
+    t_row <- . #. = current row being processed
+    data.frame(
+      time = t_row$time,
+      tempC = runif(n_iter, t_row$temp_min, t_row$temp_max), #pick value between range
+      pO2 = runif(n_iter, t_row$pO2_min, t_row$pO2_max),
+      param_samples
+    ) %>%
+      mutate(
+        tempK = tempC+273.15, #convert to Kelvin
+        phi = Ao * pO2 * B * exp((Eo/kB)*(1/tempK - 1/temp_ref)) #metabolic index
+      )
+  }) %>%
+  ungroup()
+
+results_juddL <- time_data_juddL %>% #Judd et al
+  rowwise() %>%
+  do({
+    t_row <- .
+    data.frame(
+      time = t_row$time,
+      tempC = runif(n_iter, t_row$temp_min, t_row$temp_max), #pick value between range (same goes for next 3 rows)
+      pO2 = runif(n_iter, t_row$pO2_min, t_row$pO2_max),
+      param_samples
+    ) %>%
+      mutate(
+        tempK = tempC+273.15, #convert to Kelvin
+        phi = Ao * pO2 * B * exp((Eo/kB)*(1/tempK - 1/temp_ref)) #metabolic index
+      )
+  }) %>%
+  ungroup()
+
+results_Berg <- time_data_Berg %>% #Bergmann et al
+  rowwise() %>%
+  do({
+    t_row <- .
+    data.frame(
+      time = t_row$time,
+      tempC = runif(n_iter, t_row$temp_min, t_row$temp_max), #pick value between range (same goes for next 3 rows)
+      pO2 = runif(n_iter, t_row$pO2_min, t_row$pO2_max),
+      param_samples
+    ) %>%
+      mutate(
+        tempK = tempC+273.15, #convert to Kelvin
+        phi = Ao * pO2 * B * exp((Eo/kB)*(1/tempK - 1/temp_ref)) #metabolic index
+      )
+  }) %>%
+  ungroup()
+
+#summarize phi envelope
+phi_scoteseL <- results_scoteseL %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+phi_juddL <- results_juddL %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+phi_Berg <- results_Berg %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+
+#plot
+ggplot(phi_scoteseL, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "skyblue", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "blue", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with ScoteseT_LowLat and MillsO2, Frob ecophysioypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+ggplot(phi_juddL, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "goldenrod3", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "darkorange", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with JuddT_LowLat and MillsO2, Frob ecophysioypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+ggplot(phi_Berg, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "#CBC3E3", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "purple", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with Bergmann and MillsO2, Frob ecophysioypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+#now using real ecophysiotypes
+#clean the dataset: keep only rows with valid Ao and Eo
+penn_rename <- penn %>%
+  rename(
+    Eo = `Eo (eV)`,
+    Ao = `Ao (atm-1)`
+  ) %>%
+  mutate(
+    Ao = Ao/101.325  #convert to kPa
+  )
+penn_clean <- penn_rename %>%
+  filter(!is.na(Ao), !is.na(Eo)) %>%
+  select(Species, Ao, Eo)
+#Monte Carlo using a random Ao and Eo (irrespective of species)
+set.seed(21)
+results_psL <- time_data_scoteseL %>%
+  rowwise() %>%
+  do({
+    t_row <- .
+    #sample n_iter species rows WITHOUT paired Ao and Eo
+    Ao_vals <- sample(penn_clean$Ao, size = n_iter, replace = TRUE)
+    Eo_vals <- sample(penn_clean$Eo, size = n_iter, replace = TRUE)
+    #sample temp and pO2 for n_iter iterations
+    tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+    pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+    #create data.frame with matching Ao/Eo per iteration
+    df <- tibble(
+      time = t_row$time,
+      tempC = tempC,
+      pO2 = pO2,
+      Ao = Ao_vals,
+      Eo = Eo_vals
+    ) %>%
+      mutate(
+         tempK = tempC+273.15,
+         phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref))
+  )
+    df
+  }) %>%
+  ungroup()
+
+results_pjL <- time_data_juddL %>%
+  rowwise() %>%
+  do({
+    t_row <- .
+    #sample n_iter species rows WITHOUT paired Ao and Eo
+    Ao_vals <- sample(penn_clean$Ao, size = n_iter, replace = TRUE)
+    Eo_vals <- sample(penn_clean$Eo, size = n_iter, replace = TRUE)
+    #sample temp and pO2 for n_iter iterations
+    tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+    pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+    #create data.frame with matching Ao/Eo per iteration
+    df <- tibble(
+      time = t_row$time,
+      tempC = tempC,
+      pO2 = pO2,
+      Ao = Ao_vals,
+      Eo = Eo_vals
+    ) %>%
+      mutate(
+         tempK = tempC+273.15,
+         phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref))
+  )    
+    df
+  }) %>%
+  ungroup()
+
+results_pBerg <- time_data_Berg %>%
+  rowwise() %>%
+  do({
+    t_row <- .
+    #sample n_iter species rows WITHOUT paired Ao and Eo
+    Ao_vals <- sample(penn_clean$Ao, size = n_iter, replace = TRUE)
+    Eo_vals <- sample(penn_clean$Eo, size = n_iter, replace = TRUE)
+    #sample temp and pO2 for n_iter iterations
+    tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+    pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+    #create data.frame with matching Ao/Eo per iteration
+    df <- tibble(
+      time = t_row$time,
+      tempC = tempC,
+      pO2 = pO2,
+      Ao = Ao_vals,
+      Eo = Eo_vals
+    ) %>%
+      mutate(
+         tempK = tempC+273.15,
+         phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref))
+  )    
+    df
+  }) %>%
+  ungroup()
+
+#summarize phi envelope from Penn species
+phi_psL <- results_psL %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+
+phi_pjL <- results_pjL %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+
+phi_pB <- results_pBerg %>%
+  group_by(time) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95)
+  )
+
+#plot
+ggplot(phi_psL, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "skyblue", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "blue", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with ScoteseT_LowLat and MillsO2, random Penn ecophysiotype matches",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+ggplot(phi_pjL, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "goldenrod1", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "darkorange3", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with JuddT_LowLat and MillsO2, random Penn ecophysiotype matches",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+ggplot(phi_pB, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), fill = "#CBC3E3", alpha = 0.5) +
+  geom_line(aes(y = phi_median), color = "purple", size = 1) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with JuddT_LowLat and MillsO2, random Penn ecophysiotype matches",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim = c(0, 6)) +
+  theme_minimal()
+
+#overlap the phi calculations
+phi_psL$source <- "Scotese"
+phi_pjL$source <- "Judd"
+phi_combined <- bind_rows(phi_psL, phi_pjL)
+ggplot(phi_combined, aes(x = time)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max, fill = source), alpha = 0.5) +
+  geom_line(aes(y = phi_median, color = source), size = 1) +
+  scale_fill_manual(values = c("Scotese" = "skyblue", "Judd" = "goldenrod1")) +
+  scale_color_manual(values = c("Scotese" = "blue", "Judd" = "darkorange3")) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelopes with Scotese/JuddT_LowLat and MillsO2, random Penn ecophysiotype matches",
+    x = "Time (Myr ago)",
+    y = expression(Phi)
+  ) +
+  coord_cartesian(ylim =c(0,6)) +
+  theme_minimal()
+
+#now using 3 distinct ecophysiotypes from the Neoprotoerzoic fig.s
+#average
+Ao_avg <- 1/4.5  
+Eo_avg <- 0.34  
+#good at hypoxia, bad at T
+Ao_O2 <- 1/1.2  
+Eo_O2 <- 0.86  
+#good at T, bad at hypoxia
+Ao_T <- 1/10.4
+Eo_T <- 0.01 #Frob uses -0.03 but I'll use this instead 
+
+#Monte Carlo
+set.seed(21)
+
+param_sets <- list(
+  Average = list(Ao = Ao_avg, Eo = Eo_avg),
+  Oxygen  = list(Ao = Ao_O2,  Eo = Eo_O2),
+  Temp = list(Ao = Ao_T,  Eo = Eo_T)
+)
+
+results_psL3 <- map_dfr(names(param_sets), function(set_name) {
+  params <- param_sets[[set_name]]
+  time_data_scoteseL %>%
+    rowwise() %>%
+    do({
+      t_row <- .
+      tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+      pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+      tibble(
+        time = t_row$time,
+        tempC = tempC,
+        pO2 = pO2,
+        Ao = params$Ao,
+        Eo = params$Eo
+      ) %>%
+        mutate(
+          tempK = tempC+273.15,
+          phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref))
+        )
+    }) %>%
+    ungroup() %>%
+    mutate(param_set = set_name)
+})
+
+results_pjL3 <- map_dfr(names(param_sets), function(set_name) {
+  params <- param_sets[[set_name]]
+  time_data_juddL %>%
+    rowwise() %>%
+    do({
+      t_row <- .
+      tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+      pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+      tibble(
+        time = t_row$time,
+        tempC = tempC,
+        pO2 = pO2,
+        Ao = params$Ao,
+        Eo = params$Eo
+      ) %>%
+        mutate(
+          tempK = tempC+273.15,
+          phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref))
+        )
+    }) %>%
+    ungroup() %>%
+    mutate(param_set = set_name)
+})
+
+results_pB3 <- map_dfr(names(param_sets), function(set_name) {
+  params <- param_sets[[set_name]]
+  map_dfr(seq_len(nrow(time_data_Berg)), function(i) {
+    t_row <- time_data_Berg[i, ]
+    tempC <- runif(n_iter, t_row$temp_min, t_row$temp_max)
+    temp50C <- runif(n_iter, t_row$temp50_min, t_row$temp50_max)
+    pO2 <- runif(n_iter, t_row$pO2_min, t_row$pO2_max)
+    tibble(
+      time= t_row$time,
+      tempC = tempC,
+      temp50C = temp50C,
+      pO2 = pO2,
+      Ao = params$Ao,
+      Eo = params$Eo
+    ) %>%
+      mutate(
+        tempK = tempC+273.15,
+        temp50K = temp50C+273.15,
+        phi = Ao * pO2 * B * exp((Eo/kB) * (1/tempK - 1/temp_ref)),
+        phi50 = Ao * pO2 * B * exp((Eo/kB) * (1/temp50K - 1/temp_ref)),
+      )
+  }) %>%
+  mutate(param_set = set_name)
+})
+
+#summarize phi envelope
+phi_psL3 <- results_psL3 %>%
+  group_by(time, param_set) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95),
+    .groups = "drop"
+  )
+
+phi_pjL3 <- results_pjL3 %>%
+  group_by(time, param_set) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95),
+    .groups = "drop"
+  )
+
+phi_pB3 <- results_pB3 %>%
+  group_by(time, param_set) %>%
+  summarise(
+    phi_min = quantile(phi, 0.05),
+    phi_median = median(phi),
+    phi_max = quantile(phi, 0.95),
+    phi50_min = quantile(phi50, 0.05),
+    phi50_median = median(phi50),
+    phi50_max = quantile(phi50, 0.95),
+    .groups = "drop"
+  )
+
+param_colors <- c("Average" = "black",
+                  "Oxygen" = "blue",
+                  "Temp" = "red")
+
+#plot
+ggplot(phi_psL3, aes(x = time, fill = param_set, color = param_set)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), alpha = 0.2, color = NA) +
+  geom_line(aes(y = phi_median), linewidth = 1) +
+  scale_color_manual(values = param_colors) +
+  scale_fill_manual(values = param_colors) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with ScoteseT_LowLat and MillsO2, 3 ecophysiotypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi),
+    color = "Parameter Set",
+    fill = "Parameter Set"
+  ) +
+  coord_cartesian(ylim = c(0,6))+ 
+  theme_minimal()
+
+ggplot(phi_pjL3, aes(x = time, fill = param_set, color = param_set)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), alpha = 0.2, color = NA) +
+  geom_line(aes(y = phi_median), linewidth = 1) +
+  scale_color_manual(values = param_colors) +
+  scale_fill_manual(values = param_colors) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with JuddT_LowLat and MillsO2, 3 ecophysiotypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi),
+    color = "Parameter Set",
+    fill = "Parameter Set"
+  ) +
+  coord_cartesian(ylim = c(0,6)) +
+  theme_minimal()
+
+ggplot(phi_pB3, aes(x = time, fill = param_set, color = param_set)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), alpha = 0.2, color = NA) +
+  geom_line(aes(y = phi_median), linewidth = 1) +
+  scale_color_manual(values = param_colors) +
+  scale_fill_manual(values = param_colors) +
+  scale_x_reverse() +
+  geom_vline(xintercept = extinct)+
+  labs(
+    title = "Φ Envelope with Bergmann and MillsO2, 3 ecophysiotypes",
+    x = "Time (Myr ago)",
+    y = expression(Phi),
+    color = "Parameter Set",
+    fill = "Parameter Set"
+  ) +
+  coord_cartesian(ylim = c(0,6))+
+  theme_minimal()
+
+#4-PANEL FIGURE
+#panel 1 – oxygen estimates from Mills
+p1 <- ggplot(mills, aes(x = -Time))+   #flip sign so labels are positive
+  geom_ribbon(aes(ymin = Min * (101.325/100),
+                  ymax = Max * (101.325/100)),
+              fill = "lightblue", alpha = 0.5) +
+  geom_line(aes(y = (Min+Max)/2 * (101.325/100)), color = "blue", size = 1
+            ) +
+  scale_x_reverse() +
+  labs(
+    title = "Mills O2 (kPa)",
+    x = "Time (Myr ago)",
+    y = "pO2 (kPa)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10),
+        axis.text = element_text(size = 10))+
+  coord_geo(
+    xlim = c(550, 0),
+    ylim = c(0, 45),
+    dat = list("periods"),
+    size = list(3, 2),   #periods' abbr size = 3, epochs' abbr size = 2
+    abbrv = list(TRUE, TRUE),
+    height = unit(1, "line")
+)
+
+#constant O2 version - if using, will need to make edits throughout the following code to accomodate!
+p1 <- ggplot() +
+  geom_hline(yintercept = 21, color = "blue", linewidth = 1) +
+  #optional light band to mimic your old ribbon look
+  geom_rect(aes(xmin = 0, xmax = 550, ymin = 20.5, ymax = 21.5),
+            fill = "lightblue", alpha = 0.3) +
+  scale_x_reverse(limits = c(550, 0), expand = c(0, 0)) +
+  labs(
+    title = "Constant O2 = 21 kPa",
+    x = "Time (Myr ago)",
+    y = "pO2 (kPa)"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
+  coord_geo(
+    xlim = c(550, 0),
+    ylim = c(0, 45),
+    dat = list("periods"),
+    size = list(3, 2),
+    abbrv = list(TRUE, TRUE),
+    height = unit(1, "line")
+  )
+
+#make labelled dataframes
+scotese_plot <- scotese %>%
+  mutate(Source = "Scotese")
+judd_plot <- judd %>%
+  mutate(Source = "Judd")
+bergmann_plot <- bergmann %>%
+  mutate(Source = "Bergmann")
+
+#panel 2 – temperature estimates (Scotese et al + Judd et al)
+p2 <- ggplot() +
+  #Scotese et al low SST ±3
+  geom_ribbon(data = scotese_plot, 
+              aes(x = Age,
+                  ymin = Low_SST-3,
+                  ymax = Low_SST+3,
+                  fill = Source),
+              alpha = 0.4) +
+  geom_line(data = scotese_plot,
+            aes(x = Age, y = Low_SST, color = Source),
+            linewidth = 1) +
+  #Judd et al low-lat
+  geom_ribbon(data = judd_plot,
+              aes(x = Age_Mean,
+                  ymin = Low_5,
+                  ymax = Low_95,
+                  fill = Source),
+              alpha = 0.4) +
+  geom_line(data = judd_plot,
+            aes(x = Age_Mean, y = (Low_5+Low_95)/2, color = Source),
+            linewidth = 1) +
+  #Bergmann et al
+  geom_ribbon(data = bergmann_plot, 
+              aes(x = `Age Center (Ma)`,
+                  ymin = `10th (°C)`-3,
+                  ymax = `50th (°C)`+3,
+                  fill = Source),
+              alpha = 0.4) +
+  geom_line(data = bergmann_plot,
+            aes(x = `Age Center (Ma)`, y = `10th (°C)`, color = Source),
+            linewidth = 1) +
+  scale_x_reverse() +
+  scale_color_manual(values = c("Scotese" = "blue", "Judd" = "darkorange", "Bergmann"="purple")) +
+  scale_fill_manual(values = c("Scotese" = "skyblue", "Judd" = "goldenrod1", "Bergmann"="#CBC3e3")) +
+  labs(
+    title = "Low-Latitude Temperature",
+    x = "Time (Myr ago)",
+    y = "Temperature (°C)",
+    fill = "Dataset",
+    color = "Dataset"
+  )+
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10),
+        axis.text = element_text(size = 10),
+        legend.text = element_text(size=10))+
+  theme(legend.position = "right") +
+  coord_geo(
+    xlim = c(540, 0),
+    ylim = c(20, 50),
+    dat = list("periods"),
+    size = list(3, 2), 
+    abbrv = list(TRUE, TRUE),
+    height = unit(1, "line")
+)
+
+#panel 3 – JuddT LowLat + Bergmann metabolic index envelope
+p3 <- ggplot(phi_pjL3, aes(x = time, fill = param_set, color = param_set)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), alpha = 0.2, color = NA) +
+  geom_line(aes(y = phi_median), linewidth = 1) +
+  #Bergmann envelope
+  geom_ribbon(
+    data = phi_pB3,
+    aes(x = time, ymin = phi_min, ymax = phi50_max, fill = param_set),
+    alpha = 0.2,
+    inherit.aes = FALSE
+  ) +
+  geom_line(
+    data = phi_pB3,
+    aes(x = time, y = phi_median, color = param_set),
+    linetype = "dotted",
+    linewidth = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_color_manual(values = param_colors) +
+  scale_fill_manual(values = param_colors) +
+  scale_x_reverse() +
+  labs(
+    title = "Φ Envelope – JuddTlowLat + MillsO2 with Bergmann comparison",
+    x = "Time (Myr ago)", 
+    y = expression(Phi)
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10),
+    axis.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  coord_geo(
+    xlim = c(540, 0),
+    ylim = c(0, 12),
+    dat = list("periods"),
+    size = list(3, 2),
+    abbrv = list(TRUE, TRUE),
+    height = unit(1, "line")
+  ) +
+  geom_hline(yintercept = 2.5, color = "green", linetype = "dashed")
+
+#panel 4 – Scotese et al
+p4 <- ggplot(phi_psL3, aes(x = time, fill = param_set, color = param_set)) +
+  geom_ribbon(aes(ymin = phi_min, ymax = phi_max), alpha = 0.2, color = NA) +
+  geom_line(aes(y = phi_median), linewidth = 1) +
+  scale_color_manual(values = param_colors) +
+  scale_fill_manual(values = param_colors) +
+  scale_x_reverse() +
+  coord_cartesian(ylim = c(0,6)) +
+  labs(
+    title = "Φ Envelope – ScoteseTlowLat + MillsO2",
+    x = "Time (Myr ago)", y = expression(Phi)
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 15),
+        axis.text = element_text(size = 10),
+        legend.text = element_text(size=10))+
+  theme(legend.position = "right") +
+  coord_geo(
+    xlim = c(540, 0),
+    ylim = c(0, 12),
+    dat = list("periods"),
+    size = list(3, 2),   #periods' abbr size = 3, epochs' abbr size = 2
+    abbrv = list(TRUE, TRUE),
+    height = unit(1, "line")
+  ) +
+  geom_hline(yintercept = 2.5, color = "green", linetype = "dashed")
+
+phan_fig <- (p1 | p2)/(p3 | p4)+#combines the panels into a 2x2 layout w/ patchwork
+plot_layout(guides = "collect") &
+theme(plot.margin = margin(5, 5, 5, 5))
+
+print(phan_fig)
+
+pdf("phan_fig.pdf", width = 12, height = 6)
+print(phan_fig) 
+dev.off() 
+```
+
+```{r fig 7}
+magnitude <- read_csv("C:/Neoprotoerzoic/Magnitude.csv")
+head(magnitude)
+
+p <- ggplot(
+  magnitude,
+  aes(`Oxygen (kPa)`, `Temperature change (°C)`,
+      size = Magnitude,
+      label = Mag_order,
+      color = ifelse(`Age` > 358.86, "#0BDA51", "#008080"))
+) +
+  geom_point(shape = 16, alpha = 0.6) +
+  geom_text(hjust = 0, vjust = 0, size = 4, color="black") +
+  scale_color_identity()+  #use colors as specified
+  scale_size(range = c(2, 20)) +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(
+    axis.title = element_text(size = 15),
+    legend.title = element_text(size = 15),
+    axis.text = element_text(size = 15),
+    legend.text = element_text(size = 15)
+  )
+
+p
+
+ggsave("ext_mag.pdf", p, width = 10, height = 6)
+```
+
+```{r fig max thickness}
+k = 2.27e-3 #oxygen permiability within organism in cm2/atm/h
+Pe = 0.21 #environmental oxygen level in atm
+Pmin = 6.579e-4 #minimum viable oxygen level in organism in atm
+m = 0.5413 #mass-specific metabolic rate in cm3 O2/cm3 tissue/hr
+
+#get q10
+temps <- 30:60
+rates <- m * 2^((temps-30)/10)
+rates
+
+q10_table <- data.frame(
+  Temperature = temps,
+  Rate = rates
+)
+
+q10_table
+
+Rmax = 2 * sqrt((k*(Pe-Pmin))/m)
+Rmax #maxmimum radius in cm
+
+maxrad <- read_csv("C:Neoprotoerzoic/Maximum_thickness.csv")
+head(maxrad)
+
+df_long <- maxrad %>%
+  pivot_longer(
+    cols = c(`Max thickness (5% PAL)`, `Max thickness (10% PAL)`, `Max thickness (20% PAL)`), 
+    names_to = "variable",   
+    values_to = "value"       
+  )
+
+ggplot(df_long, aes(x = `Temperature`, y = value, color = variable)) +
+  geom_line() +
+  labs(color = "Y Variables", y = "Maximum tissue thickness (cm)", title = "Max tissue thickness")
+
+#constants
+k <- 2.27e-3 #oxygen permeability (cm2/atm/h)
+Pmin <- 6.579e-4 #minimum viable oxygen (atm)
+#m_ref <- 0.5413 #reference metabolic rate at 20°C - no circ
+m_ref <- 0.1515 #reference metabolic rate at 20°C - circ
+Q10 <- 2 #Q10
+d <- 0.002 #diffusional distance between blood and surface of organism (cm)
+
+#temperature range
+temps <- 10:50
+
+#fraction of present atmospheric level (PAL)
+PAL <- c(0.01, 0.05, 0.10, 0.20, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+
+#create an empty data frame to store results
+Rmax_df <- expand.grid(
+  Temperature = temps,
+  PAL = PAL
+) %>%
+  mutate(
+    #calculate temperature-adjusted metabolic rate
+    MetabolicRate = m_ref * Q10^((Temperature-20)/10),
+    #calculate environmental oxygen
+    Pe = PAL*0.21,
+    Pb = 0.25*Pe, #average oxygen concentration in blood, only for cirulatory system
+    #calculate Rmax
+    #MaxRadius = 2 * sqrt(k * (Pe - Pmin)/MetabolicRate) #no circulatory system
+    MaxRadius = 2 * k* (Pe-Pb)/(MetabolicRate*d) #circulatory system
+  )
+
+#make PAL a factor for plotting
+Rmax_df$PAL <- factor(Rmax_df$PAL, labels = c("1% PAL", "5% PAL", "10% PAL", "20% PAL","30% PAL", "40% PAL", "50% PAL", "60% PAL",
+                                              "70% PAL", "80% PAL", "90% PAL", "100% PAL"))
+
+head(Rmax_df, 10)
+
+#plot MaxRadius vs Temperature for each PAL
+bodysizemax <- ggplot(Rmax_df, aes(x = Temperature, y = MaxRadius, color = PAL)) +
+  geom_line(size = 1.2) +
+  labs(
+    x = "Temperature (°C)",
+    y = "Maximum radius (cm)",
+    color = "Oxygen level",
+    title = "Maximum radius (cm) vs temperature (°C)"
+  ) +
+   theme_minimal(base_size = 15)+
+    theme(
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 15),
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size =15)
+  )
+
+pdf("max_radius.pdf", width = 9, height = 6)
+
+print(bodysizemax)
+
+dev.off()
+```
